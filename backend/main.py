@@ -16,6 +16,8 @@ from google.cloud import firestore
 env_path = Path(__file__).parent / '.env'
 load_dotenv(env_path)
 
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "credentials.json"
+
 PROJECT_ID = os.getenv('PROJECT_ID', 'aegis-live-guardian')
 LOCATION = os.getenv('LOCATION', 'us-central1')
 
