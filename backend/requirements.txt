@@ -1,7 +1,0 @@
-fastapi
-websockets
-python-dotenv
-google-generativeai
-google-cloud-firestore
-uvicorn
-praw

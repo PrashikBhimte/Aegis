@@ -69,6 +69,28 @@ def store_scam_report(report: dict):
     except Exception as e:
         print(f"Error storing scam report: {e}")
 
+def get_trending_threats() -> str:
+    """Fetches all documents from the 'trending_threats' collection and returns them as a JSON string."""
+    if not db:
+        return "No threat intelligence database available."
+    
+    try:
+        threats_ref = db.collection("trending_threats")
+        threats_docs = threats_ref.stream()
+        
+        threat_list = [doc.to_dict() for doc in threats_docs]
+        
+        if not threat_list:
+            return "No trending threats found in the intelligence feed."
+            
+        # Convert the list of threats to a JSON string for the prompt
+        return json.dumps(threat_list, indent=2)
+        
+    except Exception as e:
+        print(f"Error fetching trending threats: {e}")
+        return "Error retrieving threat intelligence."
+
+
 
 # --- API Endpoints ---
 # Set this to True to force the red banner to show on every page you visit
@@ -89,30 +111,18 @@ async def analyze(request: AnalysisRequest):
     # --- END TEST LOGIC ---
 
     try:
-        # 1. Query Firestore for trending threats
-        trending_threats_context = ""
-        if db:
-            threats_ref = db.collection("trending_threats")
-            threats_docs = threats_ref.limit(20).stream() # Limit to latest 20 threats
-            
-            threat_list = []
-            for doc in threats_docs:
-                threat = doc.to_dict()
-                threat_str = f"- Title: {threat.get('post_title', 'N/A')}, Phrases: {threat.get('extracted_key_phrases', [])}, Brands: {threat.get('targeted_brands', [])}"
-                threat_list.append(threat_str)
-            
-            if threat_list:
-                trending_threats_context = "\n".join(threat_list)
+        # 1. Get the latest threat intelligence
+        trending_threats_json = get_trending_threats()
 
         # 2. Build the dynamic prompt
         final_prompt = (
             f"{SECURITY_SCOUT_PROMPT}\n\n"
-            "CROSS-REFERENCE the analysis with the following recently identified threat patterns from Reddit. "
-            "If a match is found, state that the pattern was identified on Reddit. \n"
-            "--- START TRENDING THREATS ---\n"
-            f"{trending_threats_context if trending_threats_context else 'No trending data available.'}\n"
-            "--- END TRENDING THREATS ---\n\n"
-            "Analyze the following web page content:\n"
+            "Here is the latest threat intelligence on trending scams:\n"
+            "--- START INTELLIGENCE FEED ---\n"
+            f"{trending_threats_json}\n"
+            "--- END INTELLIGENCE FEED ---\n\n"
+            "Analyze the following web page content. If the user's current page matches any of these specific patterns, "
+            "flag it as 'High Risk' and mention in the 'reason' field that the match was found in the 'Intelligence Feed'.\n\n"
             f"URL: {request.url}\n\n"
             f"Page Text Content:\n---\n{request.text[:4000]}...\n---"
         )
@@ -140,6 +150,36 @@ async def analyze(request: AnalysisRequest):
     except Exception as e:
         print(f"An unexpected error occurred during analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/history")
+async def get_history():
+    """Retrieves the 10 most recent scam reports from Firestore."""
+    if not db:
+        raise HTTPException(status_code=500, detail="Firestore client not available.")
+
+    try:
+        reports_ref = db.collection('scam_reports')
+        # Query sorted by timestamp descending and limit to 10
+        query = reports_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10)
+        docs = query.stream()
+
+        history = []
+        for doc in docs:
+            data = doc.to_dict()
+            history.append({
+                "url": data.get("url"),
+                "reason": data.get("reason"),
+                "timestamp": data.get("timestamp").strftime("%Y-%m-%d %H:%M:%S UTC")
+            })
+
+        if not history:
+            return [] # Return empty list if no reports found
+            
+        return history
+
+    except Exception as e:
+        print(f"An error occurred while fetching history: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve scam history.")
 
 @app.get("/")
 async def get():

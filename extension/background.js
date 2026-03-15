@@ -34,6 +34,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
               type: 'SHOW_WARNING',
               reason: analysis.reason
             });
+
+            // Speak the warning
+            chrome.tts.speak(`Alert! Aegis has detected a potential scam. ${analysis.reason}`, {
+              rate: 1.0,
+              pitch: 1.0
+            });
           }
         })
         .catch(error => {
