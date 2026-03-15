@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+
+# Local environment files
+.env
+.env.local
+credentials.json
+*.json
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Extension folder (not needed in backend container)
+extension/
+icons/
+
+# Test files
+*_test.py
+test/
+tests/
+
+# Documentation
+*.md
+README*

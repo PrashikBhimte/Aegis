@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Aegis-Live Security Scout",
-  "version": "1.0",
-  "description": "Analyzes pages for phishing threats.",
+  "version": "2.0",
+  "description": "Aegis-Live: Immersive Guardian for phishing detection",
   "permissions": [
     "scripting",
     "notifications",
@@ -11,10 +11,12 @@
     "tts"
   ],
   "host_permissions": [
-    "http://127.0.0.1:8000/*"
+    "http://127.0.0.1:8000/*",
+    "https://*/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["config.js"]
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -28,7 +30,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"]
+      "js": ["config.js", "content.js"]
     }
   ]
 }

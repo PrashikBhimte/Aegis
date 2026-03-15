@@ -6,3 +6,4 @@ google-generativeai
 google-cloud-firestore
 uvicorn
 praw
+requests

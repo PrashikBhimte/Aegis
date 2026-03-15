@@ -1,33 +1,34 @@
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from urllib.parse import urlparse
+from pathlib import Path
+from contextlib import asynccontextmanager
+
 import requests
+from dotenv import load_dotenv
 from google import genai
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from google.cloud import firestore
 
-# --- Configuration ---
-# Set the GOOGLE_APPLICATION_CREDENTIALS environment variable, required for Vertex AI auth
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.join(os.path.dirname(__file__), '..', 'credentials.json')
+# Load environment variables
+env_path = Path(__file__).parent / '.env'
+load_dotenv(env_path)
 
-# Read the project ID from the credentials file
-try:
-    with open(os.environ["GOOGLE_APPLICATION_CREDENTIALS"], 'r') as f:
-        credentials = json.load(f)
-        PROJECT_ID = credentials.get('project_id')
-        if not PROJECT_ID:
-            raise ValueError("project_id not found in credentials.json")
-except (FileNotFoundError, ValueError) as e:
-    print(f"Error loading project_id: {e}")
-    # Fallback project ID if credentials file is missing or misconfigured
-    PROJECT_ID = "aegis-live-guardian"
+PROJECT_ID = os.getenv('PROJECT_ID', 'aegis-live-guardian')
+LOCATION = os.getenv('LOCATION', 'us-central1')
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("Aegis-Live Backend starting...")
+    yield
+    # Shutdown
+    print("Aegis-Live Backend shutting down...")
 
-# --- FastAPI App & Models ---
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 class AnalysisRequest(BaseModel):
     url: str
@@ -38,28 +39,24 @@ class ScoutReportRequest(BaseModel):
     reason: str
     source: str = "user_report"
 
-# --- Google Cloud & AI Services ---
-# Initialize Firestore Client
+# Firestore Client
 try:
     db = firestore.Client(project=PROJECT_ID)
-except Exception as e:
-    print(f"Error initializing Firestore: {e}")
+except Exception:
     db = None
 
-# Initialize Vertex AI Client
+# Vertex AI Client
 try:
-    client = genai.Client(vertexai=True, project=PROJECT_ID, location='us-central1')
-except Exception as e:
-    print(f"Error initializing Vertex AI Client: {e}")
+    client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+except Exception:
     client = None
 
-# System instruction for the "Security Scout" - UPDATED with Punycode & Domain Age priorities
 SECURITY_SCOUT_PROMPT = (
     "You are a 'Security Scout' for Aegis-Live, a cybersecurity guardian. "
     "Your mission is to analyze web page text content and its URL to identify potential phishing scams targeting Indian users. "
     "You have access to two CRITICAL threat signals that are definitive markers of modern phishing attacks:\n\n"
     "1. PUNYCODE DETECTION (xn-- prefix): If the URL contains 'xn--', it is using Internationalized Domain Names (IDN) to disguise itself. "
-    "This is a MAJOR red flag - attackers use Punycode to make malicious domains look legitimate (e.g., 'xn--sbi.com' looks like 'sbi.com' but is different). "
+    "This is a MAJOR red flag - attackers use Punycode to make malicious domains look legitimate. "
     "ALWAYS flag URLs with 'xn--' as HIGH RISK.\n\n"
     "2. DOMAIN AGE (Recently Created): If the domain was created in the LAST 7 DAYS, it is extremely suspicious. "
     "Legitimate banks and services have established domains, not newly registered ones. "
@@ -72,25 +69,21 @@ SECURITY_SCOUT_PROMPT = (
 )
 MODEL_NAME = "gemini-2.5-flash"
 
-# --- Helper Functions ---
 
 def extract_domain(url: str) -> str:
     """Extract domain from URL."""
     try:
         parsed = urlparse(url)
         domain = parsed.netloc or parsed.path
-        # Remove www. prefix if present
         if domain.startswith('www.'):
             domain = domain[4:]
         return domain
     except Exception:
         return ""
 
+
 def check_punycode(url: str) -> dict:
-    """
-    Check if URL contains Punycode (xn-- prefix).
-    Returns dict with is_punycode and details.
-    """
+    """Check if URL contains Punycode (xn-- prefix)."""
     domain = extract_domain(url)
     
     if 'xn--' in domain.lower():
@@ -100,117 +93,92 @@ def check_punycode(url: str) -> dict:
             "warning": f"Punycode detected in domain: {domain}. This is a common phishing technique."
         }
     
-    return {
-        "is_punycode": False,
-        "domain": domain,
-        "warning": None
-    }
+    return {"is_punycode": False, "domain": domain, "warning": None}
+
 
 def get_domain_age(domain: str) -> dict:
-    """
-    Perform RDAP lookup to get domain creation date.
-    Returns dict with is_new (created in last 7 days), creation_date, and age_days.
-    """
+    """Perform RDAP lookup to get domain creation date."""
     try:
-        # Extract the base domain (remove TLD)
         parts = domain.split('.')
         if len(parts) < 2:
             return {"error": "Invalid domain"}
         
-        # RDAP lookup
         rdap_url = f"http://rdap.org/domain/{domain}"
-        
         response = requests.get(rdap_url, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
-            
-            # Try to get creation date from RDAP response
             events = data.get('events', [])
-            creation_date = None
             
             for event in events:
                 if event.get('eventAction') == 'registration':
                     creation_date_str = event.get('eventDate')
                     if creation_date_str:
                         creation_date = datetime.fromisoformat(creation_date_str.replace('Z', '+00:00'))
-                        break
-            
-            if creation_date:
-                age_days = (datetime.now(creation_date.tzinfo) - creation_date).days
-                
-                return {
-                    "creation_date": creation_date.isoformat(),
-                    "age_days": age_days,
-                    "is_new": age_days <= 7,
-                    "warning": f"Domain created {age_days} days ago" if age_days <= 30 else None
-                }
+                        age_days = (datetime.now(creation_date.tzinfo) - creation_date).days
+                        
+                        return {
+                            "creation_date": creation_date.isoformat(),
+                            "age_days": age_days,
+                            "is_new": age_days <= 7,
+                            "warning": f"Domain created {age_days} days ago" if age_days <= 30 else None
+                        }
         
         return {"error": "RDAP lookup failed or domain not found"}
         
     except Exception as e:
-        print(f"RDAP lookup error: {e}")
         return {"error": str(e)}
 
+
 def store_scam_report(report: dict):
-    """Stores a scam report in the Firestore 'scam_reports' collection."""
+    """Stores a scam report in Firestore."""
     if not db:
-        print("Firestore client not available. Skipping report storage.")
         return
     try:
         reports_collection = db.collection('scam_reports')
         report['timestamp'] = datetime.utcnow()
         reports_collection.add(report)
-        print(f"Scam report stored: {report['url']}")
-    except Exception as e:
-        print(f"Error storing scam report: {e}")
+    except Exception:
+        pass
+
 
 def get_trending_threats() -> str:
-    """Fetches all documents from the 'trending_threats' collection and returns them as a JSON string."""
+    """Fetches documents from trending_threats collection."""
     if not db:
         return "No threat intelligence database available."
     
     try:
         threats_ref = db.collection("trending_threats")
         threats_docs = threats_ref.stream()
-        
         threat_list = [doc.to_dict() for doc in threats_docs]
         
         if not threat_list:
             return "No trending threats found in the intelligence feed."
             
-        # Convert the list of threats to a JSON string for the prompt
         return json.dumps(threat_list, indent=2)
         
-    except Exception as e:
-        print(f"Error fetching trending threats: {e}")
+    except Exception:
         return "Error retrieving threat intelligence."
 
 
-
-# --- API Endpoints ---
-# Set this to True to force the red banner to show on every page you visit
 TEST_MODE_FORCE_SCAM = False
+
 
 @app.post("/analyze")
 async def analyze(request: AnalysisRequest):
     if not client:
         raise HTTPException(status_code=500, detail="Vertex AI client is not initialized.")
 
-    # --- START TEST LOGIC ---
     if TEST_MODE_FORCE_SCAM:
-        print(f"DEBUG: Test mode active. Forcing scam alert for: {request.url}")
         return {
             "is_scam": True, 
             "reason": "DEBUG TEST: This is a simulated high-risk alert to verify banner injection."
         }
-    # --- END TEST LOGIC ---
 
     try:
-        # 1. Get the latest threat intelligence
         trending_threats_json = get_trending_threats()
 
-        # 2. Check for PUNYCODE (Critical Signal #1)
+        # Punycode check
         punycode_result = check_punycode(request.url)
         punycode_context = ""
         is_punycode_risk = False
@@ -219,7 +187,7 @@ async def analyze(request: AnalysisRequest):
             is_punycode_risk = True
             punycode_context = f"\n⚠️ CRITICAL: PUNYCODE DETECTED - {punycode_result.get('warning')}"
 
-        # 3. Check Domain Age via RDAP (Critical Signal #2)
+        # Domain age check
         domain = extract_domain(request.url)
         domain_age_result = get_domain_age(domain)
         age_context = ""
@@ -229,7 +197,7 @@ async def analyze(request: AnalysisRequest):
             is_age_risk = True
             age_context = f"\n⚠️ CRITICAL: NEWLY REGISTERED DOMAIN - {domain_age_result.get('warning')}"
 
-        # 4. Build the dynamic prompt with enriched context
+        # Build prompt
         final_prompt = (
             f"{SECURITY_SCOUT_PROMPT}\n\n"
             "Here is the latest threat intelligence on trending scams:\n"
@@ -246,17 +214,16 @@ async def analyze(request: AnalysisRequest):
             f"Page Text Content:\n---\n{request.text[:4000]}...\n---"
         )
         
-        # 5. Call Gemini API
+        # Call Gemini
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=[final_prompt]
         )
 
-        # 6. Process response and store report
         clean_response = response.text.strip().replace('`', '').replace('json', '')
         analysis_result = json.loads(clean_response)
 
-        # If automated checks flagged high risk, override the AI decision
+        # Override if automated checks flagged risk
         if is_punycode_risk or is_age_risk:
             analysis_result["is_scam"] = True
             reasons = []
@@ -279,18 +246,16 @@ async def analyze(request: AnalysisRequest):
         return analysis_result
 
     except Exception as e:
-        print(f"An unexpected error occurred during analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/history")
 async def get_history():
-    """Retrieves the 10 most recent scam reports from Firestore."""
     if not db:
         raise HTTPException(status_code=500, detail="Firestore client not available.")
 
     try:
         reports_ref = db.collection('scam_reports')
-        # Query sorted by timestamp descending and limit to 10
         query = reports_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10)
         docs = query.stream()
 
@@ -303,26 +268,19 @@ async def get_history():
                 "timestamp": data.get("timestamp").strftime("%Y-%m-%d %H:%M:%S UTC")
             })
 
-        if not history:
-            return [] # Return empty list if no reports found
-            
-        return history
+        return history if history else []
 
-    except Exception as e:
-        print(f"An error occurred while fetching history: {e}")
+    except Exception:
         raise HTTPException(status_code=500, detail="Could not retrieve scam history.")
+
 
 @app.post("/scout/add")
 async def add_scout_report(request: ScoutReportRequest):
-    """
-    Add a new threat to the trending_threats collection.
-    This endpoint is used for crowdsourced threat reporting.
-    """
+    """Add a new threat to trending_threats collection."""
     if not db:
         raise HTTPException(status_code=500, detail="Firestore client not available.")
 
     try:
-        # Add to trending_threats collection
         threats_collection = db.collection('trending_threats')
         
         threat_data = {
@@ -333,10 +291,7 @@ async def add_scout_report(request: ScoutReportRequest):
             "active": True
         }
         
-        # Add document
-        doc_ref = threats_collection.add(threat_data)
-        
-        print(f"Aegis: New threat added to trending_threats: {request.url}")
+        threats_collection.add(threat_data)
         
         return {
             "status": "success",
@@ -345,8 +300,8 @@ async def add_scout_report(request: ScoutReportRequest):
         }
         
     except Exception as e:
-        print(f"Error adding scout report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/")
 async def get():
