@@ -1,4 +1,4 @@
-// Aegis-Live Guardian - Background Script
+import { CONFIG } from './config.js';
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab.url && 

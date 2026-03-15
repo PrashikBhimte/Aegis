@@ -3,4 +3,3 @@ credentials.json
 __pycache__/
 ./backend/__pycache__/
 .env
-config.js
