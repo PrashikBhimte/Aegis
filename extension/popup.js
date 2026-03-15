@@ -1,4 +1,3 @@
-// Aegis-Live Threat Vault - Popup Script
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeMuteToggle();
