@@ -1,3 +1,53 @@
+// Aegis-Live Threat Vault - Popup Script
+// Handles mute toggle state and threat history display
+
+// Initialize mute toggle on load
+document.addEventListener('DOMContentLoaded', () => {
+    initializeMuteToggle();
+    fetchHistory();
+});
+
+// Initialize mute toggle with chrome.storage.local
+function initializeMuteToggle() {
+    const muteToggle = document.getElementById('mute-toggle');
+    const muteStatus = document.getElementById('mute-status');
+    
+    // Load saved mute state from chrome.storage.local
+    chrome.storage.local.get(['muteState'], (result) => {
+        const isMuted = result.muteState === true;
+        muteToggle.checked = isMuted;
+        updateMuteStatus(isMuted);
+    });
+    
+    // Listen for toggle changes
+    muteToggle.addEventListener('change', (e) => {
+        const isMuted = e.target.checked;
+        
+        // Save state to chrome.storage.local
+        chrome.storage.local.set({ muteState: isMuted }, () => {
+            if (chrome.runtime.lastError) {
+                console.error('Aegis: Failed to save mute state:', chrome.runtime.lastError);
+            } else {
+                console.log('Aegis: Mute state updated to:', isMuted ? 'MUTED' : 'ACTIVE');
+            }
+        });
+        
+        updateMuteStatus(isMuted);
+    });
+}
+
+// Update mute status display
+function updateMuteStatus(isMuted) {
+    const muteStatus = document.getElementById('mute-status');
+    if (isMuted) {
+        muteStatus.textContent = 'OFF';
+        muteStatus.classList.add('muted');
+    } else {
+        muteStatus.textContent = 'ON';
+        muteStatus.classList.remove('muted');
+    }
+}
+
 // Function to calculate time since the event
 function timeSince(date) {
     const seconds = Math.floor((new Date() - date) / 1000);
@@ -30,7 +80,7 @@ function renderHistory(historyData) {
     historyList.innerHTML = ''; // Clear existing list
 
     if (!historyData || historyData.length === 0) {
-        historyList.innerHTML = '<div style="text-align: center; color: #94a3b8;">No threats detected recently.</div>';
+        historyList.innerHTML = '<div class="empty-state">No threats detected recently. Stay safe! 🛡️</div>';
         return;
     }
 
@@ -61,20 +111,21 @@ function renderHistory(historyData) {
 }
 
 // Fetch history when the popup is opened
-document.addEventListener('DOMContentLoaded', () => {
+function fetchHistory() {
     fetch('http://127.0.0.1:8000/history')
         .then(response => {
             if (!response.ok) {
-                throw new Error(`Network response was not ok: ${response.statusText}`);
+                throw new Error(`Server returned: ${response.statusText}`);
             }
             return response.json();
         })
         .then(data => {
+            console.log('Aegis: Threat history loaded successfully');
             renderHistory(data);
         })
         .catch(error => {
-            console.error('Failed to fetch threat history:', error);
+            console.error('Aegis: Failed to fetch threat history:', error);
             const historyList = document.getElementById('history-list');
-            historyList.innerHTML = `<div style="text-align: center; color: #ef4444;">Error: Could not connect to Aegis backend.</div>`;
+            historyList.innerHTML = `<div class="error-state">⚠️ Connection Error: Could not reach Aegis backend.</div>`;
         });
-});
+}
