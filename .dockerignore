@@ -11,8 +11,6 @@ env/
 # Local environment files
 .env
 .env.local
-credentials.json
-*.json
 
 # Git
 .git/

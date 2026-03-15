@@ -2,7 +2,7 @@ Pillow
 fastapi
 websockets
 python-dotenv
-google-generativeai
+google-genai
 google-cloud-firestore
 uvicorn
 praw

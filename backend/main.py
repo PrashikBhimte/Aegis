@@ -1,6 +1,5 @@
 import json
 import os
-import re
 from datetime import datetime
 from urllib.parse import urlparse
 from pathlib import Path
